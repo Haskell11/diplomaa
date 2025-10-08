@@ -1,3 +1,4 @@
+//основной код - пока еще проверяется на других скетчах(например, diploma1)
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <Wire.h>

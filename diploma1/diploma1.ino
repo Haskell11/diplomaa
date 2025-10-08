@@ -1,3 +1,4 @@
+//первая версия отправки сообщения с esp32 на компьютер через wifi
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
