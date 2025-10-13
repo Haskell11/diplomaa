@@ -1,33 +1,50 @@
+
+//нужно заменить библиотеку 
 #include <Wire.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
 
-Adafruit_MPU6050 mpu;
+#define SDA_PIN 21
+#define SCL_PIN 22
 
-void setup(void) {
+void setup() {
   Serial.begin(115200);
-  
-  // Запускаем I2C
-  if (!mpu.begin()) {
-    Serial.println("Не удалось найти MPU6050. Проверьте подключение!");
-    while (1) {
-      delay(10);
-    }
+  delay(200); // небольшая пауза после старта
+
+  // Включаем внутренние подтяжки ПЕРЕД инициализацией Wire
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  pinMode(SCL_PIN, INPUT_PULLUP);
+
+  // Инициализируем I2C с пониженной скоростью
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000); // 100 kHz — стандартная скорость I2C
+
+  Serial.println("Reading WHO_AM_I register from MPU6050...");
+
+  // Читаем регистр WHO_AM_I (адрес 0x75)
+  Wire.beginTransmission(0x68);
+  Wire.write(0x75); // адрес регистра WHO_AM_I
+  uint8_t error = Wire.endTransmission(false); // false = не отправлять STOP (для restart)
+
+  if (error != 0) {
+    Serial.printf("❌ I2C error during write: %d\n", error);
+    return;
   }
-  Serial.println("MPU6050 найден!");
+
+  // Запрашиваем 1 байт
+  Wire.requestFrom(0x68, 1);
+  if (Wire.available()) {
+    uint8_t whoami = Wire.read();
+    Serial.printf("WHO_AM_I = 0x%02X\n", whoami);
+
+    if (whoami == 0x68) {
+      Serial.println("✅ MPU6050 detected correctly!");
+    } else {
+      Serial.println("❌ Unexpected WHO_AM_I value. Possible I2C instability or wrong device.");
+    }
+  } else {
+    Serial.println("❌ No data received from MPU6050.");
+  }
 }
 
 void loop() {
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
-  Serial.print("Accel X: "); Serial.print(a.acceleration.x);
-  Serial.print(", Y: "); Serial.print(a.acceleration.y);
-  Serial.print(", Z: "); Serial.print(a.acceleration.z);
-  Serial.print(" | Gyro X: "); Serial.print(g.gyro.x);
-  Serial.print(", Y: "); Serial.print(g.gyro.y);
-  Serial.print(", Z: "); Serial.print(g.gyro.z);
-  Serial.println("");
-
-  delay(500);
+  // Ничего не делаем
 }
