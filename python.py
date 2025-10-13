@@ -1,16 +1,25 @@
-#передача и прием с компьютера на esp32
 import socket
 
+# --- Настройки ---
 ESP32_IP = "192.168.1.26"  # IP ESP32
-PORT = 3333
+PORT = 3333     # Порт (должен совпадать)
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("", PORT))  # слушаем входящие пакеты
+sock.bind(("", PORT))
 
-while True:
-    # --- Получаем данные с ESP32 ---
-    data, addr = sock.recvfrom(1024)
-    print(f"Received from {addr}: {data.decode()}")
+print(f"🎯 Listening for data on {PORT} ...")
 
-    # --- Отправляем команду на ESP32 ---
-    sock.sendto(b"Hello ESP32!", (ESP32_IP, PORT))
+try:
+    while True:
+        data, addr = sock.recvfrom(1024)  # 1024 байта буфера
+        message = data.decode("utf-8").strip()
+        print(f"[{addr[0]}] {message}")
+
+        # --- (опционально) отправка ответа ESP32 ---
+        response = "PC received data ✅"
+        sock.sendto(response.encode(), addr)
+
+except KeyboardInterrupt:
+    print("\n🛑 Программа остановлена пользователем.")
+finally:
+    sock.close()
