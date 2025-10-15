@@ -1,25 +1,26 @@
 import socket
+import time
 
-# --- Настройки ---
-ESP32_IP = "192.168.1.26"  # IP ESP32
-PORT = 3333     # Порт (должен совпадать)
+ESP32_IP = "192.168.1.26"  # IP ESP32 
+PORT = 3333
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(("", PORT))
+sock.bind(( "", PORT))
 
-print(f"🎯 Listening for data on {PORT} ...")
+print(f"📡 Connecting to ESP32 ({ESP32_IP}) ...")
 
-try:
-    while True:
-        data, addr = sock.recvfrom(1024)  # 1024 байта буфера
-        message = data.decode("utf-8").strip()
-        print(f"[{addr[0]}] {message}")
+# команда на запуск
+sock.sendto(b"START", (ESP32_IP, PORT))
+print("🚀 Sent START command to ESP32")
 
-        # --- (опционально) отправка ответа ESP32 ---
-        response = "PC received data ✅"
-        sock.sendto(response.encode(), addr)
 
-except KeyboardInterrupt:
-    print("\n🛑 Программа остановлена пользователем.")
-finally:
-    sock.close()
+while True:
+    try:
+        data, addr = sock.recvfrom(1024)
+        print(f"📨 {addr}: {data.decode()}")
+    except KeyboardInterrupt:
+        print("🛑 Stopping...")
+        sock.sendto(b"STOP", (ESP32_IP, PORT))
+        break
+
+sock.close()
