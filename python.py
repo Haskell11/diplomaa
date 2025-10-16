@@ -1,51 +1,67 @@
 import socket
-import time
 import os
+import csv
+import time
 from datetime import datetime
 
-ESP32_IP = "192.168.1.26"  # IP ESP32 
+ESP32_IP = "192.168.1.26"
 PORT = 3333
 
-# логи
-log_dir = "log"
-os.makedirs(log_dir, exist_ok=True)  # создается папку
+# === Создаём папку для логов ===
+log_dir = "logs"
+os.makedirs(log_dir, exist_ok=True)
 
-# создарние уникальное имя файла по времени 
+# === Имя файла с текущей датой и временем ===
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_path = os.path.join(log_dir, f"log_{timestamp}.csv")
+log_file = os.path.join(log_dir, f"flight_{timestamp}.csv")
 
-# открытие файл для записи
-log_file = open(log_path, "w", encoding="utf-8")
-log_file.write("time,data\n")
+# === Создаём CSV-файл и заголовки ===
+headers = ["Time(s)", "AX", "AY", "AZ", "GX", "GY", "GZ", "AngleX", "AngleY", "AngleZ"]
 
-print(f"🧾 Логирование в файл: {log_path}")
+with open(log_file, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(headers)
 
+# === Настройка UDP ===
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("", PORT))
 
-print(f" Connecting to ESP32 ({ESP32_IP}) ...")
+print(f"📡 Connecting to ESP32 ({ESP32_IP}) ...")
 
-# Отправляем команду на запуск
+# отправляем команду START
 sock.sendto(b"START", (ESP32_IP, PORT))
-print("🚀 Sent START command to ESP32\n")
+print("🚀 Sent START command to ESP32")
+
+start_time = time.time()
 
 try:
     while True:
         data, addr = sock.recvfrom(1024)
         msg = data.decode().strip()
-        current_time = time.strftime("%H:%M:%S")
+        print(f"📨 {msg}")
 
-        print(f"📨 {current_time} | {msg}")
+        # Разбираем строку в формат "ключ:значение"
+        values = {}
+        for part in msg.split():
+            if ":" in part:
+                k, v = part.split(":")
+                values[k] = v
 
-        # сохраняем данные в лог
-        log_file.write(f"{current_time},{msg}\n")
-        log_file.flush()  # сбрасываем буфер (на случай внезапного завершения)
+        # Записываем строку в CSV
+        current_time = time.time() - start_time
+        row = [
+            round(current_time, 2),
+            values.get("AX"), values.get("AY"), values.get("AZ"),
+            values.get("GX"), values.get("GY"), values.get("GZ"),
+            values.get("AngleX"), values.get("AngleY"), values.get("AngleZ")
+        ]
+
+        with open(log_file, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
 
 except KeyboardInterrupt:
     print("\n🛑 Stopping...")
     sock.sendto(b"STOP", (ESP32_IP, PORT))
-
-finally:
-    log_file.close()
     sock.close()
-    print("📁 Лог сохранён и соединение закрыто.")
+    print(f"💾 Data saved to {log_file}")

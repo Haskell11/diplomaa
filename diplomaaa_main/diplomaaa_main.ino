@@ -12,7 +12,7 @@ const char* pcIP = "192.168.1.104";
 const int pcPort = 3333;
 
 MPU6050 mpu(Wire);
-bool active = false; // передача выключена по умолчанию
+bool active = false;
 
 void setup() {
   Serial.begin(115200);
@@ -57,18 +57,26 @@ void loop() {
     }
   }
 
-  // если активен режим передачи — шлём данные
   if (active) {
     mpu.update();
-    String msg = "X:" + String(mpu.getAngleX()) +
-                 " Y:" + String(mpu.getAngleY()) +
-                 " Z:" + String(mpu.getAngleZ());
+
+    
+    String msg = "AX:" + String(mpu.getAccX(), 2) + //линейные ускорения вдоль осей 
+                 " AY:" + String(mpu.getAccY(), 2) +
+                 " AZ:" + String(mpu.getAccZ(), 2) +
+                 " GX:" + String(mpu.getGyroX(), 2) + // угловые скорости(насколько быстро вращается MPU вокруг осей)
+                 " GY:" + String(mpu.getGyroY(), 2) +
+                 " GZ:" + String(mpu.getGyroZ(), 2) +
+                 " AngleX:" + String(mpu.getAngleX(), 2) + // вычисленные углы наклона
+                 " AngleY:" + String(mpu.getAngleY(), 2) +
+                 " AngleZ:" + String(mpu.getAngleZ(), 2) +
+                 
 
     udp.beginPacket(pcIP, pcPort);
     udp.write((const uint8_t*)msg.c_str(), msg.length());
     udp.endPacket();
 
-    Serial.println("Sent: " + msg);
+    Serial.println(msg);
     delay(500);
   }
 }
