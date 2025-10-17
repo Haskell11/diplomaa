@@ -7,22 +7,22 @@ from datetime import datetime
 ESP32_IP = "192.168.1.26"
 PORT = 3333
 
-# === Создаём папку для логов ===
+# папка для логов 
 log_dir = "logs"
 os.makedirs(log_dir, exist_ok=True)
 
-# === Имя файла с текущей датой и временем ===
+# имя файла+дата
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 log_file = os.path.join(log_dir, f"flight_{timestamp}.csv")
 
-# === Создаём CSV-файл и заголовки ===
+# CSV-файл  
 headers = ["Time(s)", "AX", "AY", "AZ", "GX", "GY", "GZ", "AngleX", "AngleY", "AngleZ"]
 
 with open(log_file, "w", newline="") as f:
-    writer = csv.writer(f)
+    writer = csv.writer(f, delimiter='\t')
     writer.writerow(headers)
 
-# === Настройка UDP ===
+# Настройка UDP 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("", PORT))
 
@@ -57,7 +57,7 @@ try:
         ]
 
         with open(log_file, "a", newline="") as f:
-            writer = csv.writer(f)
+            writer = csv.writer(f, delimiter='\t')
             writer.writerow(row)
 
 except KeyboardInterrupt:
