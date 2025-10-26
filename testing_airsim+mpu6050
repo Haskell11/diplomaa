@@ -1,0 +1,96 @@
+import socket
+import os
+import time
+from datetime import datetime
+import airsim
+import math
+
+ESP32_IP = "192.168.1.26"
+PORT = 3333
+
+# 📁 Папка для логов
+log_dir = "logs"
+os.makedirs(log_dir, exist_ok=True)
+
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_file = os.path.join(log_dir, f"flight_{timestamp}.txt")
+headers = ["Time(s)", "AX", "AY", "AZ", "GX", "GY", "GZ", "AngleX", "AngleY", "AngleZ"]
+
+with open(log_file, "w", encoding="utf-8") as f:
+    f.write("=== Flight Session ===\n")
+    f.write("\t".join(headers) + "\n")
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("", PORT))
+
+print(f"📡 Connecting to ESP32 ({ESP32_IP}) ...")
+sock.sendto(b"START", (ESP32_IP, PORT))
+print("🚀 Sent START command to ESP32")
+
+# 🔗 Подключение к AirSim
+client = airsim.MultirotorClient()
+client.confirmConnection()
+client.enableApiControl(True)
+client.armDisarm(True)
+client.takeoffAsync().join()
+
+start_time = time.time()
+
+def degrees_to_radians(deg):
+    return deg * math.pi / 180.0
+
+try:
+    while True:
+        data, addr = sock.recvfrom(1024)
+        msg = data.decode().strip()
+        print(f"📨 {msg}")
+        values = {}
+        for part in msg.split():
+            if ":" in part:
+                k, v = part.split(":")
+                values[k] = v
+        for k, v in values.items():
+            try:
+                values[k] = float(v)
+            except ValueError:
+                values[k] = 0.0
+
+        current_time = round(time.time() - start_time, 2)
+        angle_x = values.get("AngleX", 0)
+        angle_y = values.get("AngleY", 0)
+        angle_z = values.get("AngleZ", 0)
+
+        # 🔄 Передаём ориентацию дрону
+        orientation = airsim.to_quaternion(
+            degrees_to_radians(angle_x),
+            degrees_to_radians(angle_y),
+            degrees_to_radians(angle_z)
+        )
+        client.simSetVehiclePose(airsim.Pose(airsim.Vector3r(0, 0, -2), orientation), True)
+
+        # 💾 запись данных
+        row = [
+            str(current_time),
+            values.get("AX", ""), values.get("AY", ""), values.get("AZ", ""),
+            values.get("GX", ""), values.get("GY", ""), values.get("GZ", ""),
+            str(angle_x), str(angle_y), str(angle_z)
+        ]
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("\t".join(map(str, row)) + "\n")
+
+        client.moveByAngleRatesThrottleAsync(
+        pitch_rate=values["GY"],
+            roll_rate=values["GX"],
+            yaw_rate=values["GZ"],
+            throttle=0.6,
+            duration=0.05
+)    
+
+except KeyboardInterrupt:
+    print("\n🛑 Stopping...")
+    sock.sendto(b"STOP", (ESP32_IP, PORT))
+    sock.close()
+    client.landAsync().join()
+    client.armDisarm(False)
+    client.enableApiControl(False)
+    print(f"💾 Data saved to {log_file}")

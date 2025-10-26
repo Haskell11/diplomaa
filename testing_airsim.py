@@ -1,11 +1,24 @@
-import sys
-import os
-sys.path.insert(0, os.path.abspath("airsim_client"))
+import airsim
+import time
 
-try:
-    import airsim
-    print("✅ airsim импортирован")
-    print("Путь:", airsim.__file__)
-    print("Есть MultirotorClient:", hasattr(airsim, 'MultirotorClient'))
-except Exception as e:
-    print("❌ Ошибка:", e)
+# Подключение к симулятору
+client = airsim.MultirotorClient()
+client.confirmConnection()
+
+# Разблокировка и взлёт
+client.enableApiControl(True)
+client.armDisarm(True)
+
+print("Взлетаем...")
+client.takeoffAsync().join()
+time.sleep(3)
+
+print("Двигаемся вперёд...")
+client.moveByVelocityAsync(1, 0, 0, 3).join()
+
+print("Посадка...")
+client.landAsync().join()
+
+client.armDisarm(False)
+client.enableApiControl(False)
+print("✅ Завершено")
