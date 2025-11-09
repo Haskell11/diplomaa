@@ -4,23 +4,24 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-//======== Wi-Fi настройки домашний вайфай========
-const char* ssid = "MTS_GPON_2A89";
-const char* password = "3g6y2ZaiLu";
-//======== UDP настройки для домашнего вайфая ========
-WiFiUDP udp;
-const char* pcIP = "192.168.1.104";  // IP  ПК (приём данных)
-const int pcPort = 3333;
-const int localPort = 3333;
+// //======== Wi-Fi настройки домашний вайфай========
+// const char* ssid = "MTS_GPON_2A89";
+// const char* password = "3g6y2ZaiLu";
+// //======== UDP настройки для домашнего вайфая ========
+// WiFiUDP udp;
+// //const char* pcIP = "192.168.1.104";  // IP  ПК (приём данных)
+// const char* pcIP = "192.168.1.38";  // IP  ноута (приём данных)
+// const int pcPort = 3333;
+// const int localPort = 3333;
 
 // ======== Wi-Fi настройки мобильный интернет ========
-//const char* ssid = "iphoneMax11";
-//const char* password = "haskellq";
+const char* ssid = "iphoneMax11";
+const char* password = "haskellq";
 // ======== UDP настройки мобильный интернет ========
-//WiFiUDP udp;
-//const char* pcIP = "172.20.10.2";  // 
-//const int pcPort = 3333;
-//const int localPort = 3333;
+WiFiUDP udp;
+const char* pcIP = "172.20.10.2";  // 
+const int pcPort = 3333;
+const int localPort = 3333;
 
 // ======== MPU6050 ========
 MPU6050 mpu(0x68);
