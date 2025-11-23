@@ -4,6 +4,9 @@ import time
 from datetime import datetime
 import airsim
 import math
+import threading
+import sys
+import msvcrt
 
 # 🔧 Настройки
 ESP32_IP = "172.20.10.3"
@@ -184,9 +187,6 @@ def calculate_oriented_velocity(rel_pitch, rel_roll, drone_yaw):
     local_forward = -control_roll * CALIBRATION['max_velocity'] / max_control    # Roll → вперед/назад
     local_right = control_pitch * CALIBRATION['max_velocity'] / max_control      # Pitch → влево/вправо
     
-    print(f"💡 Control: P={control_pitch:5.1f}° R={control_roll:5.1f}°")
-    print(f"💡 Local: F={local_forward:5.2f} R={local_right:5.2f}")
-    
     # Минимальная скорость для реакции
     min_speed = 0.5
     if abs(local_forward) < min_speed and abs(local_right) < min_speed:
@@ -196,8 +196,6 @@ def calculate_oriented_velocity(rel_pitch, rel_roll, drone_yaw):
     yaw_rad = math.radians(drone_yaw)
     global_x = local_forward * math.cos(yaw_rad) - local_right * math.sin(yaw_rad)
     global_y = local_forward * math.sin(yaw_rad) + local_right * math.cos(yaw_rad)
-    
-    print(f"🎮 Global: X={global_x:5.2f} Y={global_y:5.2f} (Yaw={drone_yaw:.1f}°)")
     
     # Увеличиваем минимальную скорость
     speed = math.sqrt(global_x**2 + global_y**2)
@@ -212,18 +210,159 @@ prev_yaw, prev_pitch, prev_roll = 0, 0, 0
 last_command_time = time.time()
 start_time = time.time()
 
+# ТЕКУЩИЙ РЕЖИМ:
+# 1 – вывод телеметрии (основной)
+# 2 – меню камеры
+current_mode = 1
+program_running = True
+menu_shown = False
+
+# Параметры камеры FPV (основной вид)
+camera_pitch = 0  # тангаж камеры (вверх/вниз)
+camera_yaw = 0    # рыскание камеры (влево/вправо)
+
+def apply_camera_orientation():
+    """Применяет ориентацию к FPV камере через gimbal"""
+    try:
+        # Используем gimbal для управления камерой (более надежный способ)
+        client.simSetCameraPose(
+            "0",  # основная камера дрона
+            airsim.Pose(
+                airsim.Vector3r(0, 0, 0),  # позиция не меняем
+                airsim.to_quaternion(
+                    math.radians(camera_pitch),  # pitch
+                    math.radians(0),             # roll (не используем)
+                    math.radians(camera_yaw)     # yaw
+                )
+            )
+        )
+        return True
+    except Exception as e:
+        try:
+            # Альтернативный способ для FPV камеры
+            client.simSetCameraPose(
+                "fpv",  # FPV камера
+                airsim.Pose(
+                    airsim.Vector3r(0, 0, 0),
+                    airsim.to_quaternion(
+                        math.radians(camera_pitch),
+                        math.radians(0),
+                        math.radians(camera_yaw)
+                    )
+                )
+            )
+            return True
+        except Exception as e2:
+            print(f"  ❌ Ошибка камеры: {e2}")
+            return False
+
+def get_key():
+    """Считывание клавиши без ENTER"""
+    try:
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key == b'\xe0':  # Специальные клавиши (стрелки)
+                key = msvcrt.getch()
+                if key == b'H': return 'up'
+                if key == b'P': return 'down'
+                if key == b'K': return 'left'
+                if key == b'M': return 'right'
+            else:
+                return key.decode('utf-8').lower()
+    except:
+        pass
+    return None
+
+def show_main_menu():
+    """Показывает главное меню один раз"""
+    global menu_shown
+    if not menu_shown:
+        print("\n" + "="*50)
+        print("🔧 Меню управления:")
+        print("   [1] Режим телеметрии")
+        print("   [2] Настройка камеры") 
+        print("   [q] Посадка и выход")
+        print("👉 Нажмите клавишу (1, 2 или q)")
+        print("="*50)
+        menu_shown = True
+
+def show_camera_menu():
+    """Показывает меню камеры один раз"""
+    print("\n🎥 Режим настройки камеры:")
+    print("  ↑/↓ — тангаж камеры (вверх/вниз)")
+    print("  ←/→ — рыскание камеры (влево/вправо)") 
+    print("  b — возврат в меню")
+    print(f"  Текущие углы: Pitch={camera_pitch}°, Yaw={camera_yaw}°")
+
+def menu_thread():
+    global current_mode, program_running, camera_pitch, camera_yaw, menu_shown
+
+    while program_running:
+        key = get_key()
+        
+        if key:
+            if current_mode == 1:
+                # Главное меню
+                if key == '1':
+                    current_mode = 1
+                    menu_shown = False  # Сбрасываем флаг для показа меню
+                    print("\n📡 Режим телеметрии")
+                elif key == '2':
+                    current_mode = 2
+                    menu_shown = False
+                    show_camera_menu()
+                elif key == 'q':
+                    print("\n🛬 Запуск посадки...")
+                    program_running = False
+                    break
+
+            elif current_mode == 2:
+                # Режим настройки камеры
+                step = 5  # шаг в градусах
+                changed = False
+                
+                if key == 'up':
+                    camera_pitch += step
+                    changed = True
+                elif key == 'down':
+                    camera_pitch -= step
+                    changed = True
+                elif key == 'left':
+                    camera_yaw += step
+                    changed = True
+                elif key == 'right':
+                    camera_yaw -= step
+                    changed = True
+                elif key == 'b':
+                    current_mode = 1
+                    menu_shown = False
+                    print("↩️ Возврат в меню")
+
+                if changed:
+                    if apply_camera_orientation():
+                        print(f"  📷 Камера: Pitch={camera_pitch}°, Yaw={camera_yaw}°")
+
+        time.sleep(0.1)
+
+# Запускаем меню в отдельном потоке
+menu_thread = threading.Thread(target=menu_thread, daemon=True)
+menu_thread.start()
+
 print("\n🚀 УПРАВЛЕНИЕ АКТИВНО!")
 print("💡 Наклоняйте контроллер для управления:")
 print("   ▶️  Наклон ВПЕРЕД = летит ВПЕРЕД")
 print("   ◀️  Наклон ВЛЕВО = летит ВЛЕВО") 
 print("   ▶️  Наклон ВПРАВО = летит ВПРАВО")
 print("   🔽 Наклон НАЗАД = летит НАЗАД")
-print("🛑 Ctrl+C для остановки")
-print("="*50)
+print("🛑 Для остановки нажмите q в меню")
 
 try:
-    while True:
+    while program_running:
         current_time = time.time()
+        
+        # Показываем меню только когда нужно
+        if current_mode == 1 and not menu_shown:
+            show_main_menu()
         
         try:
             data, addr = sock.recvfrom(1024)
@@ -253,16 +392,14 @@ try:
                     if abs(rel_roll) < CALIBRATION['dead_zone']:
                         rel_roll = 0
                     
-                    print(f"📊 Raw: P={pitch:6.1f}° R={roll:6.1f}° Y={yaw:6.1f}°")
-                    print(f"🎯 Rel: P={rel_pitch:6.1f}° R={rel_roll:6.1f}°")
-                    
-                    # Рассчитываем скорости с исправленным только тангажом
+                    # Рассчитываем скорости
                     velocity_x, velocity_y, control_pitch, control_roll = calculate_oriented_velocity(rel_pitch, rel_roll, yaw)
                     
-                    print(f"🎮 Global: X={velocity_x:5.2f} Y={velocity_y:5.2f} m/s")
-                    print("-" * 50)
+                    # 🔧 ВЫВОДИМ ТЕЛЕМЕТРИЮ ТОЛЬКО В РЕЖИМЕ 1
+                    if current_mode == 1:
+                        print(f"\r📊 Raw: P={pitch:6.1f}° R={roll:6.1f}° Y={yaw:6.1f}° | Rel: P={rel_pitch:6.1f}° R={rel_roll:6.1f}° | V: X={velocity_x:5.2f} Y={velocity_y:5.2f} m/s", end='', flush=True)
                     
-                    # Логируем углы в файл
+                    # Логируем углы в файл (всегда)
                     timestamp = current_time - start_time
                     log_angles(timestamp, yaw, pitch, roll, rel_pitch, rel_roll, 
                               control_pitch, control_roll, velocity_x, velocity_y)
@@ -289,13 +426,16 @@ try:
                                       airsim.YawMode(True, 0))
             last_command_time = current_time
 
+        time.sleep(0.05)  # Небольшая задержка для стабильности
+
 except KeyboardInterrupt:
-    print("\n🛑 Остановка...")
+    print("\n🛑 Остановка по Ctrl+C...")
+    program_running = False
 
 finally:
+    print("\n🛬 Запуск посадки...")
     sock.sendto(b"STOP", (ESP32_IP, PORT))
     sock.close()
-    print("🛬 Landing...")
     client.landAsync().join()
     client.armDisarm(False)
     client.enableApiControl(False)
