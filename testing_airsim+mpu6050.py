@@ -216,12 +216,13 @@ start_time = time.time()
 current_mode = 1
 program_running = True
 menu_shown = False
+camera_menu_shown = False
 
 # Параметры камеры FPV (основной вид)
 camera_pitch = 0  # тангаж камеры (вверх/вниз)
 camera_yaw = 0    # рыскание камеры (влево/вправо)
 
-def apply_camera_orientation():
+def apply_camera_orientation(): 
     """Применяет ориентацию к FPV камере через gimbal"""
     try:
         # Используем gimbal для управления камерой (более надежный способ)
@@ -288,14 +289,20 @@ def show_main_menu():
 
 def show_camera_menu():
     """Показывает меню камеры один раз"""
-    print("\n🎥 Режим настройки камеры:")
-    print("  ↑/↓ — тангаж камеры (вверх/вниз)")
-    print("  ←/→ — рыскание камеры (влево/вправо)") 
-    print("  b — возврат в меню")
-    print(f"  Текущие углы: Pitch={camera_pitch}°, Yaw={camera_yaw}°")
+    global camera_menu_shown
+    if not camera_menu_shown:
+        print("\n🎥 РЕЖИМ НАСТРОЙКИ КАМЕРЫ")
+        print("  ↑/↓ — наклон камеры (вверх/вниз)")
+        print("  ←/→ — поворот камеры (влево/вправо)") 
+        print("  [b] — возврат в меню")
+        print("  Текущие углы: Pitch=0°, Yaw=0°")
+        camera_menu_shown = True
 
+def update_camera_display():
+    """Обновляет отображение углов камеры в одной строке"""
+    print(f"\r  📷 Камера: Pitch={camera_pitch}°, Yaw={camera_yaw}°", end=' ' * 10, flush=True)
 def menu_thread():
-    global current_mode, program_running, camera_pitch, camera_yaw, menu_shown
+    global current_mode, program_running, camera_pitch, camera_yaw, menu_shown, camera_menu_shown
 
     while program_running:
         key = get_key()
@@ -305,11 +312,13 @@ def menu_thread():
                 # Главное меню
                 if key == '1':
                     current_mode = 1
-                    menu_shown = False  # Сбрасываем флаг для показа меню
+                    menu_shown = False
+                    camera_menu_shown = False
                     print("\n📡 Режим телеметрии")
                 elif key == '2':
                     current_mode = 2
                     menu_shown = False
+                    camera_menu_shown = False
                     show_camera_menu()
                 elif key == 'q':
                     print("\n🛬 Запуск посадки...")
@@ -328,19 +337,21 @@ def menu_thread():
                     camera_pitch -= step
                     changed = True
                 elif key == 'left':
-                    camera_yaw += step
+                    camera_yaw -= step  # 🔧 ИСПРАВЛЕНО: лево = уменьшение yaw
                     changed = True
                 elif key == 'right':
-                    camera_yaw -= step
+                    camera_yaw += step  # 🔧 ИСПРАВЛЕНО: право = увеличение yaw
                     changed = True
                 elif key == 'b':
                     current_mode = 1
                     menu_shown = False
-                    print("↩️ Возврат в меню")
+                    camera_menu_shown = False
+                    print("\n↩️ Возврат в меню")
+                    continue
 
                 if changed:
                     if apply_camera_orientation():
-                        print(f"  📷 Камера: Pitch={camera_pitch}°, Yaw={camera_yaw}°")
+                        update_camera_display()
 
         time.sleep(0.1)
 
@@ -363,6 +374,8 @@ try:
         # Показываем меню только когда нужно
         if current_mode == 1 and not menu_shown:
             show_main_menu()
+        elif current_mode == 2 and not camera_menu_shown:
+            show_camera_menu()
         
         try:
             data, addr = sock.recvfrom(1024)
