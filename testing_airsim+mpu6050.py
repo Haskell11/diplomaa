@@ -1,0 +1,303 @@
+import socket
+import os
+import time
+from datetime import datetime
+import airsim
+import math
+
+# 🔧 Настройки
+ESP32_IP = "172.20.10.3"
+PORT = 3333
+
+# 📁 Создание папки для логов
+LOG_DIR = "logs"
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+# 📝 Создание файла лога
+log_filename = f"angles_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+log_filepath = os.path.join(LOG_DIR, log_filename)
+
+def log_angles(timestamp, raw_yaw, raw_pitch, raw_roll, rel_pitch, rel_roll, control_pitch, control_roll, velocity_x, velocity_y):
+    """Запись углов в лог файл"""
+    data_line = f"{timestamp:.2f}\t{raw_yaw:.2f}\t{raw_pitch:.2f}\t{raw_roll:.2f}\t{rel_pitch:.2f}\t{rel_roll:.2f}\t{control_pitch:.2f}\t{control_roll:.2f}\t{velocity_x:.2f}\t{velocity_y:.2f}"
+    with open(log_filepath, 'a', encoding='utf-8') as f:
+        f.write(data_line + '\n')
+
+def log_calibration_data():
+    """Запись калибровочных данных в лог"""
+    with open(log_filepath, 'a', encoding='utf-8') as f:
+        f.write(f"# CALIBRATION_DATA: zero_pitch={CALIBRATION['zero_pitch']:.2f}, zero_roll={CALIBRATION['zero_roll']:.2f}, sensitivity={CALIBRATION['sensitivity']:.2f}, dead_zone={CALIBRATION['dead_zone']:.2f}\n")
+
+# 🔗 Настройка сокета
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("", PORT))
+sock.settimeout(0.1)
+
+# 🔗 Подключение к AirSim
+print("🚁 Connecting to AirSim...")
+client = airsim.MultirotorClient()
+client.confirmConnection()
+client.enableApiControl(True)
+client.armDisarm(True)
+
+print("🛫 Taking off...")
+client.takeoffAsync().join()
+print("✅ Takeoff complete")
+
+print("⬆️ Moving to altitude 10m...")
+client.moveToZAsync(-10, 3).join()
+print("✅ Altitude set")
+
+time.sleep(2)
+
+print(f"📡 Ожидание данных от ESP32 ({ESP32_IP}:{PORT})...")
+sock.sendto(b"START", (ESP32_IP, PORT))
+
+def get_current_sensor_data():
+    try:
+        data, addr = sock.recvfrom(1024)
+        msg = data.decode().strip()
+        parts = msg.split(',')
+        if len(parts) == 3:
+            return float(parts[0]), float(parts[1]), float(parts[2])
+    except:
+        pass
+    return None
+
+# 🔧 КАЛИБРОВОЧНЫЕ НАСТРОЙКИ
+CALIBRATION = {
+    'zero_pitch': 0.0,     # Будет установлено при калибровке
+    'zero_roll': 0.0,      # Будет установлено при калибровке
+    'max_velocity': 8.0,   # Максимальная скорость
+    'dead_zone': 8.0,      # Мертвая зона
+    'sensitivity': 1.5,    # Общая чувствительность
+    'invert_pitch': False,  # ИНВЕРТИРОВАТЬ ТОЛЬКО PITCH
+    'invert_roll': True   # НЕ инвертировать ROLL
+}
+
+# 🎯 ФУНКЦИЯ КАЛИБРОВКИ
+def calibrate_controller():
+    """Автоматическая калибровка нулевых положений"""
+    print("\n🎯 НАЧАЛО АВТОМАТИЧЕСКОЙ КАЛИБРОВКИ")
+    print("=" * 50)
+    print("1. Положите контроллер на РОВНУЮ поверхность")
+    print("2. Не двигайте контроллер 3 секунды...")
+    
+    time.sleep(3)
+    
+    # Сбор данных для калибровки
+    pitch_samples = []
+    roll_samples = []
+    yaw_samples = []
+    
+    print("📊 Сбор данных калибровки...")
+    
+    start_time = time.time()
+    sample_count = 0
+    
+    while time.time() - start_time < 3:  # Сбор данных 3 секунды
+        data = get_current_sensor_data()
+        if data:
+            yaw, pitch, roll = data
+            yaw_samples.append(yaw)
+            pitch_samples.append(pitch)
+            roll_samples.append(roll)
+            sample_count += 1
+            print(f"   Собрано образцов: {sample_count}", end='\r')
+        time.sleep(0.05)
+    
+    # Очищаем прогресс-бар
+    print()
+    
+    if pitch_samples and roll_samples:
+        # Вычисляем средние значения
+        CALIBRATION['zero_pitch'] = sum(pitch_samples) / len(pitch_samples)
+        CALIBRATION['zero_roll'] = sum(roll_samples) / len(roll_samples)
+        
+        print(f"\n✅ КАЛИБРОВКА ЗАВЕРШЕНА:")
+        print(f"   🎯 Zero Pitch: {CALIBRATION['zero_pitch']:.1f}°")
+        print(f"   🎯 Zero Roll: {CALIBRATION['zero_roll']:.1f}°")
+        print(f"   📊 Образцов собрано: {sample_count}")
+        
+        return True
+    else:
+        print("❌ Ошибка калибровки: не удалось собрать данные")
+        return False
+
+# 🔧 ВЫБОР РЕЖИМА КАЛИБРОВКИ
+print("\n🔧 НАСТРОЙКА КАЛИБРОВКИ")
+print("1 - Использовать стандартные настройки")
+print("2 - Автоматическая калибровка")
+
+calibration_choice = input("Выберите режим (1 или 2): ").strip()
+
+if calibration_choice == "2":
+    if calibrate_controller():
+        print("✅ Калибровка успешно завершена")
+    else:
+        print("❌ Калибровка не удалась, используются стандартные настройки")
+        CALIBRATION['zero_pitch'] = 27.0
+        CALIBRATION['zero_roll'] = -14.0
+else:
+    print("⚙️ Используются стандартные калибровочные значения")
+    CALIBRATION['zero_pitch'] = 27.0
+    CALIBRATION['zero_roll'] = -14.0
+
+print("\n⚙️  Настройки управления:")
+print(f"   Нулевые: Pitch={CALIBRATION['zero_pitch']:.1f}°, Roll={CALIBRATION['zero_roll']:.1f}°")
+print(f"   Макс. скорость: {CALIBRATION['max_velocity']} m/s")
+print(f"   Инвертировать Pitch: {CALIBRATION['invert_pitch']}")
+print(f"   Инвертировать Roll: {CALIBRATION['invert_roll']}")
+
+# Создаем заголовок для лог файла и записываем калибровочные данные
+with open(log_filepath, 'w', encoding='utf-8') as f:
+    f.write("Time(s)\tRaw_Yaw\tRaw_Pitch\tRaw_Roll\tRel_Pitch\tRel_Roll\tControl_Pitch\tControl_Roll\tVelocity_X\tVelocity_Y\n")
+    log_calibration_data()
+
+print(f"📝 Логирование начато: {log_filename}")
+print(f"💾 Калибровочные данные записаны в лог")
+
+def calculate_oriented_velocity(rel_pitch, rel_roll, drone_yaw):
+    """
+    Преобразование с исправленным только тангажом
+    """
+    # 🔧 ИНВЕРТИРУЕМ ОСИ ПРИ НЕОБХОДИМОСТИ
+    if CALIBRATION['invert_pitch']:
+        rel_pitch = -rel_pitch  # Инвертируем тангаж (влево/вправо)
+    
+    if CALIBRATION['invert_roll']:
+        rel_roll = -rel_roll    # Инвертируем крен (вперед/назад)
+    
+    # Применяем чувствительность
+    control_pitch = rel_pitch * CALIBRATION['sensitivity']
+    control_roll = rel_roll * CALIBRATION['sensitivity']
+    
+    # Ограничиваем углы управления
+    max_control = 45.0
+    control_pitch = max(-max_control, min(max_control, control_pitch))
+    control_roll = max(-max_control, min(max_control, control_roll))
+    
+    
+    # Pitch (тангаж) = влево/вправо
+    # Roll (крен) = вперед/назад
+    local_forward = -control_roll * CALIBRATION['max_velocity'] / max_control    # Roll → вперед/назад
+    local_right = control_pitch * CALIBRATION['max_velocity'] / max_control      # Pitch → влево/вправо
+    
+    print(f"💡 Control: P={control_pitch:5.1f}° R={control_roll:5.1f}°")
+    print(f"💡 Local: F={local_forward:5.2f} R={local_right:5.2f}")
+    
+    # Минимальная скорость для реакции
+    min_speed = 0.5
+    if abs(local_forward) < min_speed and abs(local_right) < min_speed:
+        return 0, 0, control_pitch, control_roll
+    
+    # Преобразование в глобальные скорости
+    yaw_rad = math.radians(drone_yaw)
+    global_x = local_forward * math.cos(yaw_rad) - local_right * math.sin(yaw_rad)
+    global_y = local_forward * math.sin(yaw_rad) + local_right * math.cos(yaw_rad)
+    
+    print(f"🎮 Global: X={global_x:5.2f} Y={global_y:5.2f} (Yaw={drone_yaw:.1f}°)")
+    
+    # Увеличиваем минимальную скорость
+    speed = math.sqrt(global_x**2 + global_y**2)
+    if 0 < speed < min_speed:
+        global_x = global_x * min_speed / speed
+        global_y = global_y * min_speed / speed
+    
+    return global_x, global_y, control_pitch, control_roll
+
+# Основной цикл
+prev_yaw, prev_pitch, prev_roll = 0, 0, 0
+last_command_time = time.time()
+start_time = time.time()
+
+print("\n🚀 УПРАВЛЕНИЕ АКТИВНО!")
+print("💡 Наклоняйте контроллер для управления:")
+print("   ▶️  Наклон ВПЕРЕД = летит ВПЕРЕД")
+print("   ◀️  Наклон ВЛЕВО = летит ВЛЕВО") 
+print("   ▶️  Наклон ВПРАВО = летит ВПРАВО")
+print("   🔽 Наклон НАЗАД = летит НАЗАД")
+print("🛑 Ctrl+C для остановки")
+print("="*50)
+
+try:
+    while True:
+        current_time = time.time()
+        
+        try:
+            data, addr = sock.recvfrom(1024)
+            msg = data.decode().strip()
+
+            if ',' in msg:
+                parts = msg.split(',')
+                if len(parts) == 3:
+                    yaw_raw, pitch_raw, roll_raw = float(parts[0]), float(parts[1]), float(parts[2])
+                    
+                    if any(math.isnan(x) for x in [yaw_raw, pitch_raw, roll_raw]):
+                        continue
+
+                    # Сглаживание
+                    yaw = 0.8 * prev_yaw + 0.2 * yaw_raw
+                    pitch = 0.8 * prev_pitch + 0.2 * pitch_raw
+                    roll = 0.8 * prev_roll + 0.2 * roll_raw
+                    prev_yaw, prev_pitch, prev_roll = yaw, pitch, roll
+                    
+                    # Относительные углы
+                    rel_pitch = pitch - CALIBRATION['zero_pitch']
+                    rel_roll = roll - CALIBRATION['zero_roll']
+                    
+                    # Мертвая зона
+                    if abs(rel_pitch) < CALIBRATION['dead_zone']:
+                        rel_pitch = 0
+                    if abs(rel_roll) < CALIBRATION['dead_zone']:
+                        rel_roll = 0
+                    
+                    print(f"📊 Raw: P={pitch:6.1f}° R={roll:6.1f}° Y={yaw:6.1f}°")
+                    print(f"🎯 Rel: P={rel_pitch:6.1f}° R={rel_roll:6.1f}°")
+                    
+                    # Рассчитываем скорости с исправленным только тангажом
+                    velocity_x, velocity_y, control_pitch, control_roll = calculate_oriented_velocity(rel_pitch, rel_roll, yaw)
+                    
+                    print(f"🎮 Global: X={velocity_x:5.2f} Y={velocity_y:5.2f} m/s")
+                    print("-" * 50)
+                    
+                    # Логируем углы в файл
+                    timestamp = current_time - start_time
+                    log_angles(timestamp, yaw, pitch, roll, rel_pitch, rel_roll, 
+                              control_pitch, control_roll, velocity_x, velocity_y)
+                    
+                    # Управление дроном
+                    client.moveByVelocityZAsync(
+                        velocity_x, 
+                        velocity_y, 
+                        -10, 
+                        0.1,
+                        airsim.DrivetrainType.MaxDegreeOfFreedom,
+                        airsim.YawMode(False, yaw)
+                    )
+                    
+                    last_command_time = current_time
+                        
+        except socket.timeout:
+            pass
+        
+        # Keep-alive
+        if current_time - last_command_time > 0.5:
+            client.moveByVelocityZAsync(0, 0, -10, 0.2, 
+                                      airsim.DrivetrainType.MaxDegreeOfFreedom,
+                                      airsim.YawMode(True, 0))
+            last_command_time = current_time
+
+except KeyboardInterrupt:
+    print("\n🛑 Остановка...")
+
+finally:
+    sock.sendto(b"STOP", (ESP32_IP, PORT))
+    sock.close()
+    print("🛬 Landing...")
+    client.landAsync().join()
+    client.armDisarm(False)
+    client.enableApiControl(False)
+    print("✅ Завершено")
+    print(f"💾 Лог сохранен в: {log_filepath}")
