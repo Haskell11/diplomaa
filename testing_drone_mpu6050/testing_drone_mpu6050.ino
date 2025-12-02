@@ -14,7 +14,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <Servo.h>   
+#include <ESP32Servo.h> 
 
 // ----------------- WiFi / UDP ---------------------
 const char* ssid = "iphoneMax11";
@@ -74,7 +74,7 @@ struct PID {
   float prevErr;
   float outLimit; // абсолютное ограничение выхода (в "единицах управления")
 };
-PID pidPitch = { 4.0, 0.02, 0.5, 0.0, 0.0, 1.5 }; // пример значений - настройте на стенде
+PID pidPitch = { 4.0, 0.02, 0.5, 0.0, 0.0, 1.5 }; // пример значений
 PID pidRoll  = { 4.0, 0.02, 0.5, 0.0, 0.0, 1.5 };
 PID pidYaw   = { 2.0, 0.005, 0.3, 0.0, 0.0, 1.0 };
 
@@ -100,18 +100,17 @@ void processUdpCommand(const String &cmd);
 void setup() {
   Serial.begin(115200);
   delay(200);
+  Serial.println("\n\n=== Инициализация коптера ESP32 ===");
+  Serial.println("Версия: с PID и управлением моторами");
 
   // I2C
   Wire.begin(21, 22);
   Wire.setClock(400000);
+  Serial.println("I2C инициализирован (SDA=21, SCL=22)");
 
   // Инициализация MPU
   Serial.println(F("Инициализация MPU6050..."));
   mpu.initialize();
-  if (!mpu.testConnection()) {
-    Serial.println(F("MPU6050 не отвечает!"));
-    while (1) { delay(1000); } // остановка
-  }
 
   uint8_t devStatus = mpu.dmpInitialize();
   Serial.print(F("Статус dmpInitialize: "));
@@ -121,7 +120,7 @@ void setup() {
   // mpu.setXAccelOffset(...); и т.д.
 
   // Калибровка (опционально) - может занять время
-  Serial.println(F("Калибровка (акселерометр+гироскоп) ..."));
+  Serial.println(F("Калибровка (акселерометр+гироскоп) ... Не двигайте датчик!"));
   mpu.CalibrateAccel(6);
   mpu.CalibrateGyro(6);
   mpu.PrintActiveOffsets();
@@ -141,11 +140,12 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpReadyISR, RISING);
 
   // Подключение моторов
-  motor1.attach(MOTOR_PIN_1);
-  motor2.attach(MOTOR_PIN_2);
-  motor3.attach(MOTOR_PIN_3);
-  motor4.attach(MOTOR_PIN_4);
-
+  motor1.attach(MOTOR_PIN_1, THROTTLE_MIN, THROTTLE_MAX);
+  motor2.attach(MOTOR_PIN_2, THROTTLE_MIN, THROTTLE_MAX);
+  motor3.attach(MOTOR_PIN_3, THROTTLE_MIN, THROTTLE_MAX);
+  motor4.attach(MOTOR_PIN_4, THROTTLE_MIN, THROTTLE_MAX);
+ Serial.printf("Моторы подключены: пины %d,%d,%d,%d\n", 
+                MOTOR_PIN_1, MOTOR_PIN_2, MOTOR_PIN_3, MOTOR_PIN_4);
   // Начинаем с отключенных моторов (минимум)
   stopAllMotors();
 
@@ -161,6 +161,12 @@ void setup() {
 
   prevMicros = micros();
   Serial.println("Настройка завершена");
+  Serial.println("Команды UDP:");
+  Serial.println("  START/STOP - стриминг углов");
+  Serial.println("  ARM/DISARM - управление моторами");
+  Serial.println("  SET y p r t - установка углов и газа");
+  Serial.println("Пример: SET 0 10 0 1300");
+  Serial.println("----------------------------\n");
 }
 
 // ----------------- Основной цикл ---------------------------
@@ -190,6 +196,14 @@ void loop() {
     float pitch= ypr[1] * 180.0 / M_PI;
     float roll = ypr[2] * 180.0 / M_PI;
 
+    static unsigned long lastPrint = 0;
+      if (millis() - lastPrint > 100) { // Выводим каждые 100 мс
+        Serial.print("Yaw:"); Serial.print(yaw, 2);
+        Serial.print(", Pitch:"); Serial.print(pitch, 2);
+        Serial.print(", Roll:"); Serial.println(roll, 2);
+        lastPrint = millis();
+      }
+
     // Безопасность: если углы слишком большие - отключить газ
     if (abs(pitch) > 60.0 || abs(roll) > 60.0 || abs(yaw) > 120.0) {
       emergencyStop = true;
@@ -207,6 +221,10 @@ void loop() {
       float uRoll  = runPID(pidRoll,  rollDesired,  roll,  dt);
       float uYaw   = runPID(pidYaw,   yawDesired,   yaw,   dt);
 
+      if (millis() - lastPrint > 100) { // Тот же интервал
+              Serial.printf("PID: P=%.3f, R=%.3f, Y=%.3f | ", uPitch, uRoll, uYaw);
+              Serial.printf("PWM: %d %d %d %d\n", PWM1, PWM2, PWM3, PWM4);
+            }
       // применение микширования моторов -> вычисление PWM1..4
       applyMotorMix(uPitch, uRoll, uYaw, throttleSet);
 
