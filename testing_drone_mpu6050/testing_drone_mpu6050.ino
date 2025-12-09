@@ -108,10 +108,9 @@ void setup() {
   Wire.setClock(400000);
   Serial.println("I2C инициализирован (SDA=21, SCL=22)");
 
-  // Инициализация MPU
+  // Инициализация MPU и DMP
   Serial.println(F("Инициализация MPU6050..."));
   mpu.initialize();
-
   uint8_t devStatus = mpu.dmpInitialize();
   Serial.print(F("Статус dmpInitialize: "));
   Serial.println(devStatus);
