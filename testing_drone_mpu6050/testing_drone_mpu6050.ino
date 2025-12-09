@@ -1,4 +1,4 @@
-/*  Встроенное ПО для ESP32
+/*  
     - MPU6050 DMP (рыскание/тангаж/крен)
     - UDP-стриминг (START / STOP)
     - Управление 4 ESC через Servo.writeMicroseconds
@@ -20,7 +20,7 @@
 const char* ssid = "iphoneMax11";
 const char* password = "haskellq";
 WiFiUDP udp;
-const char* pcIP = "172.20.10.2"; // IP ПК (прием IMU)
+const char* pcIP = "172.20.10.2"; // IP ПК 
 const int pcPort = 3333;
 const int localPort = 3333;
 
@@ -33,7 +33,7 @@ Quaternion q;
 VectorFloat gravity;
 float ypr[3]; // рыскание, тангаж, крен (радианы)
 
-// Опционально использовать прерывания для DMP (здесь не требуется, будем опрашивать)
+// Опционально использовать прерывания для DMP 
 volatile bool mpuFlag = false;
 #define INTERRUPT_PIN 2
 void IRAM_ATTR dmpReadyISR() { mpuFlag = true; }
@@ -41,7 +41,7 @@ void IRAM_ATTR dmpReadyISR() { mpuFlag = true; }
 // ----------------- Моторы / Сервоприводы ----------------
 Servo motor1, motor2, motor3, motor4;
 
-// Пины по умолчанию (измените при необходимости)
+// Пины моторов  
 const int MOTOR_PIN_1 = 13;
 const int MOTOR_PIN_2 = 12;
 const int MOTOR_PIN_3 = 14;
@@ -50,9 +50,9 @@ const int MOTOR_PIN_4 = 27;
 // Границы ШИМ для ESC (микросекунды)
 const int THROTTLE_MIN = 1000;
 const int THROTTLE_MAX = 2000;
-int throttleSet = 1100; // значение газа по умолчанию (мкс) — можно изменить через SET
+int throttleSet = 1100; // значение газа —  изменяется через SET
 
-// Флаг аварийной остановки: при true моторы остановлены (минимальный газ)
+// Флаг аварийной остановки: при true моторы остановлены 
 bool emergencyStop = false;
 
 // ----------------- Управляющие переменные ----------------
@@ -65,25 +65,25 @@ float yawDesired   = 0.0;
 float pitchDesired = 0.0;
 float rollDesired  = 0.0;
 
-// PID коэффициенты для каждой оси (настройте эти значения)
+// PID коэффициенты для каждой оси 
 struct PID {
   float Kp;
   float Ki;
   float Kd;
   float integral;
   float prevErr;
-  float outLimit; // абсолютное ограничение выхода (в "единицах управления")
+  float outLimit; // абсолютное ограничение выхода 
 };
-PID pidPitch = { 4.0, 0.02, 0.5, 0.0, 0.0, 1.5 }; // пример значений
+PID pidPitch = { 4.0, 0.02, 0.5, 0.0, 0.0, 1.5 }; 
 PID pidRoll  = { 4.0, 0.02, 0.5, 0.0, 0.0, 1.5 };
 PID pidYaw   = { 2.0, 0.005, 0.3, 0.0, 0.0, 1.0 };
 
 // Коэффициент преобразования выхода PID в микросекунды мотора
-const float MOTOR_SCALE_US = 180.0; // 1.0 единица PID -> 180 мкс на ESC (настройте)
+const float MOTOR_SCALE_US = 180.0; // 1.0 единица PID (180 мкс на ESC) 
 
 // Время для цикла PID
 uint32_t prevMicros = 0;
-const uint32_t PID_PERIOD_US = 8000; // 8 мс ~ 125 Гц
+const uint32_t PID_PERIOD_US = 8000; // 8 мс (125 Гц)
 
 // ШИМ моторов (микросекунды)
 int PWM1=THROTTLE_MIN, PWM2=THROTTLE_MIN, PWM3=THROTTLE_MIN, PWM4=THROTTLE_MIN;
@@ -116,10 +116,7 @@ void setup() {
   Serial.print(F("Статус dmpInitialize: "));
   Serial.println(devStatus);
 
-  // Опционально установите смещения если известны (закомментируйте для авто-калибровки)
-  // mpu.setXAccelOffset(...); и т.д.
-
-  // Калибровка (опционально) - может занять время
+  // Калибровка (
   Serial.println(F("Калибровка (акселерометр+гироскоп) ... Не двигайте датчик!"));
   mpu.CalibrateAccel(6);
   mpu.CalibrateGyro(6);
@@ -135,7 +132,6 @@ void setup() {
     while (1) { delay(1000); }
   }
 
-  // подключить прерывание если нужно (все равно опрашиваем), опционально:
   pinMode(INTERRUPT_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpReadyISR, RISING);
 
@@ -146,7 +142,7 @@ void setup() {
   motor4.attach(MOTOR_PIN_4, THROTTLE_MIN, THROTTLE_MAX);
  Serial.printf("Моторы подключены: пины %d,%d,%d,%d\n", 
                 MOTOR_PIN_1, MOTOR_PIN_2, MOTOR_PIN_3, MOTOR_PIN_4);
-  // Начинаем с отключенных моторов (минимум)
+  // Начинаем с отключенных моторов 
   stopAllMotors();
 
   // WiFi
@@ -204,7 +200,7 @@ void loop() {
         lastPrint = millis();
       }
 
-    // Безопасность: если углы слишком большие - отключить газ
+    // если углы слишком большие - отключение 
     if (abs(pitch) > 60.0 || abs(roll) > 60.0 || abs(yaw) > 120.0) {
       emergencyStop = true;
       Serial.println("Аварийная остановка: превышен предельный угол");
@@ -216,7 +212,7 @@ void loop() {
     if (dt_us >= PID_PERIOD_US) {
       float dt = dt_us * 1e-6f; // секунды
 
-      // вычисление выходов PID (единицы измерения - "единицы управления")
+      // вычисление выходов PID 
       float uPitch = runPID(pidPitch, pitchDesired, pitch, dt);
       float uRoll  = runPID(pidRoll,  rollDesired,  roll,  dt);
       float uYaw   = runPID(pidYaw,   yawDesired,   yaw,   dt);
@@ -255,7 +251,7 @@ void loop() {
 
 // ----------------- Функции ----------------------
 
-// Взвод моторов: плавный подъем до стартового газа
+// Взвод моторов
 void armMotors() {
   Serial.println("Взвод моторов...");
   // Установить MIN, подождать, затем плавно поднять до throttleSet
@@ -265,7 +261,7 @@ void armMotors() {
   motor4.writeMicroseconds(THROTTLE_MIN);
   delay(1000);
 
-  // плавный подъем до throttleSet (безопасно)
+  // плавный подъем до throttleSet 
   int steps = 20;
   int start = THROTTLE_MIN;
   for (int i=1;i<=steps;i++){

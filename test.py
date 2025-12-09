@@ -32,7 +32,7 @@ class Config:
     MIN_THROTTLE = 1000
     MAX_THROTTLE = 2000
     DEFAULT_THROTTLE = 1100
-    MAX_ANGLE_LIMIT = 45.0
+    MAX_ANGLE_LIMIT = 60.0
     MIN_SPEED_THRESHOLD = 0.5
     DEAD_ZONE_DEFAULT = 8.0
     SENSITIVITY_DEFAULT = 1.5
@@ -590,7 +590,7 @@ class MenuManager:
             else:
                 if select.select([sys.stdin], [], [], 0)[0]:
                     key = sys.stdin.read(1)
-                    if key == '\x1b':  # Escape sequence
+                    if key == '\x1b':  
                         if select.select([sys.stdin], [], [], 0.1)[0]:
                             next1, next2 = sys.stdin.read(2)
                             if next1 == '[':
@@ -728,7 +728,7 @@ class DroneControlSystem:
             print("👉 Нажмите клавишу (цифра/буква)")
             
             self.menu.menu_shown = True
-            self.menu.print_telemetry_flag = False
+            #self.menu.print_telemetry_flag = False
     
     def drone_control_menu(self):
         """Меню управления дроном"""

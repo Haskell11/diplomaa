@@ -225,14 +225,14 @@ camera_yaw = 0    # рыскание камеры (влево/вправо)
 def apply_camera_orientation(): 
     """Применяет ориентацию к FPV камере через gimbal"""
     try:
-        # Используем gimbal для управления камерой (более надежный способ)
+        # Используем gimbal для управления камерой - более надежный способ
         client.simSetCameraPose(
             "0",  # основная камера дрона
             airsim.Pose(
                 airsim.Vector3r(0, 0, 0),  # позиция не меняем
                 airsim.to_quaternion(
                     math.radians(camera_pitch),  # pitch
-                    math.radians(0),             # roll (не используем)
+                    math.radians(0),             # roll - не используем
                     math.radians(camera_yaw)     # yaw
                 )
             )
@@ -262,7 +262,7 @@ def get_key():
     try:
         if msvcrt.kbhit():
             key = msvcrt.getch()
-            if key == b'\xe0':  # Специальные клавиши (стрелки)
+            if key == b'\xe0':  # стрелки
                 key = msvcrt.getch()
                 if key == b'H': return 'up'
                 if key == b'P': return 'down'
@@ -337,10 +337,10 @@ def menu_thread():
                     camera_pitch -= step
                     changed = True
                 elif key == 'left':
-                    camera_yaw -= step  # 🔧 ИСПРАВЛЕНО: лево = уменьшение yaw
+                    camera_yaw -= step  #  лево = уменьшение yaw
                     changed = True
                 elif key == 'right':
-                    camera_yaw += step  # 🔧 ИСПРАВЛЕНО: право = увеличение yaw
+                    camera_yaw += step  #  право = увеличение yaw
                     changed = True
                 elif key == 'b':
                     current_mode = 1
