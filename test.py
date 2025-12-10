@@ -418,8 +418,8 @@ class SensorProcessor:
                           min(Config.MAX_ANGLE_LIMIT, control_roll))
         
         # Преобразование в локальные скорости
-        local_forward = -control_roll * self.calibration.max_velocity / Config.MAX_ANGLE_LIMIT
-        local_right = control_pitch * self.calibration.max_velocity / Config.MAX_ANGLE_LIMIT
+        local_forward = control_pitch * self.calibration.max_velocity / Config.MAX_ANGLE_LIMIT
+        local_right = control_roll * self.calibration.max_velocity / Config.MAX_ANGLE_LIMIT
         
         # Минимальная скорость для реакции
         if abs(local_forward) < Config.MIN_SPEED_THRESHOLD and \
