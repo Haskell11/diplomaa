@@ -1,5 +1,5 @@
 #include <I2Cdev.h>
-#include <MPU6050_6Axis_MotionApps20.h>
+#include <MPU6050_6Axis_MotionApps612.h>
 #include <helper_3dmath.h>
 #include <Wire.h>
 #include <WiFi.h>
@@ -111,7 +111,7 @@ void PID_DIGITAL(float q[], float err[], float u[]);
 void vectorstore(float arr[], float val);
 float SATURATION(float x, float upper, float lower);
 float LMT(float x, float threshold);
-int T2PWM(float T, int T0, int Tmin, int Tmax, float p[]);
+int T2PWM(float T, int THROTTLE0, int THROTTLE_MIN, int THROTTLE_MAX, float p[]);
 void GetErrs(float xd[], float x[], float dx[]);
 void FindAngleRateDesired(float angleErr[], float angleRated[], float kY, float kP, float kR);
 void ANGLERATEFILTER(int16_t GYR[], float omg[], float dt, float cutoff);
@@ -216,7 +216,7 @@ void setup() {
   // ------ Инициализация параметров ПИД регуляторов (ИСПРАВЛЕНО) ------
   DIGPIDCOEFF(qP, 0.195, 1.01, 0.0006, TAU);   // Pitch (было 0.017)
   DIGPIDCOEFF(qR, 0.18, 0.4, 0.0006, TAU);     // Roll (было 0.0005)       
-  DIGPIDCOEFF(qY, 0.195, 1.01, 0.034, TAU);    // Yaw (0.017*2 = 0.034)
+  DIGPIDCOEFF(qY, 0.195, 1.01, 0.017*2, TAU);    // Yaw (0.017*2 = 0.034)
 
   Serial.println("\n=== НАСТРОЙКА ЗАВЕРШЕНА ===");
 }
@@ -473,7 +473,7 @@ void PID_DIGITAL(float q[], float err[], float u[]) {
   int T2PWM(float T, int THROTTLE0, int THROTTLE_MIN, int THROTTLE_MAX, float p[]) {
     float T0, TSUM, PWM;
     
-    // сила тяги при THROTTLE0
+    // сила тяги при THROTTLE0 (ИЗМЕНЕНО: используем THROTTLE0, а не PWM0)
     T0 = p[0] * (THROTTLE0 - 1000) * (THROTTLE0 - 1000) + 
          p[1] * (THROTTLE0 - 1000) + 
          p[2];
@@ -485,10 +485,10 @@ void PID_DIGITAL(float q[], float err[], float u[]) {
         TSUM = 0;
     }
     
-    // PWM соответствующий суммарной тяге
-    PWM = (-p[1] + sqrt(p[1]*p[1] - 4*p[0]*(p[2] - TSUM))) * 0.5/p[0] + 1000; 
+    // PWM соответствующий суммарной тяге 
+    PWM = (-p[1] + sqrt(p[1]*p[1] - 4*p[0]*(p[2] - TSUM)))*0.5/p[0] + 1000; 
     
-    // Ограничение (saturation)
+    // ограничение (saturation)
     if (PWM < THROTTLE_MIN) {
         PWM = THROTTLE_MIN;
     }
@@ -505,9 +505,9 @@ void ANGLERATEFILTER(int16_t GYR[], float omg[], float DT, float w0) {
     float omgx, omgy, omgz;
 
     // расчет угловой скорости 
-    gyrox[0] = (float)GYR[0] / 32768 * 2000 / 180 * PI;   // roll
-    gyroy[0] = -(float)GYR[1] / 32768 * 2000 / 180 * PI;  // pitch
-    gyroz[0] = -(float)GYR[2] / 32768 * 2000 / 180 * PI;  // yaw
+    gyrox[0] = (float)GYR[0]/32768 * (2000/180) *PI;   // roll
+    gyroy[0] = -(float)GYR[1]/32768 * (2000/180) *PI;  // pitch  
+    gyroz[0] = -(float)GYR[2]/32768 * (2000/180) *PI;  // yaw
     
     // фильтрация показаний гироскопов 
     omgx = DigLowPassFil(omg[0], gyrox[0], gyrox[1], DT, w0);
