@@ -19,6 +19,14 @@ except ImportError:
     import tty
     WINDOWS = False
 
+# Импорты для YOLOv8
+import cv2
+import numpy as np
+import torch
+from ultralytics import YOLO
+from collections import defaultdict
+from threading import Thread, Lock
+
 # ============================================================================
 # КОНСТАНТЫ И КОНФИГУРАЦИЯ
 # ============================================================================
@@ -39,6 +47,148 @@ class Config:
     SOCKET_TIMEOUT = 0.1
     MAIN_LOOP_SLEEP = 0.05
     KEEP_ALIVE_INTERVAL = 0.5
+    
+    # YOLOv8 настройки
+    YOLO_MODEL_PATH = r"C:\Users\mkravtsov\Desktop\diplomaa\diplomaa\Best.pt"
+    YOLO_CONFIDENCE = 0.5
+    YOLO_FRAME_WIDTH = 640
+    YOLO_FRAME_HEIGHT = 360
+
+# ============================================================================
+# КЛАСС ДЛЯ YOLOv8 ДЕТЕКЦИИ
+# ============================================================================
+
+class YOLOv8Detector:
+    """Класс для детекции объектов с помощью YOLOv8"""
+    
+    def __init__(self, model_path: str = Config.YOLO_MODEL_PATH, 
+                 conf_threshold: float = Config.YOLO_CONFIDENCE):
+        self.model = YOLO(model_path)
+        self.conf_threshold = conf_threshold
+        self.detection_active = False
+        self.current_frame = None
+        self.detection_results = []
+        self.lock = Lock()
+        self.detection_thread = None
+        self.camera_client = None
+        
+        # Проверка устройства
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f'🔧 YOLOv8 использует устройство: {self.device}')
+        self.model.to(self.device)
+        
+        # Цвета для аннотаций
+        self.colors = [
+            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (0, 255, 255),
+            (255, 0, 255), (192, 192, 192), (128, 128, 128), (128, 0, 0), (128, 128, 0),
+            (0, 128, 0), (128, 0, 128), (0, 128, 128), (0, 0, 128), (72, 61, 139),
+            (47, 79, 79), (47, 79, 47), (0, 206, 209), (148, 0, 211), (255, 20, 147)
+        ]
+        
+    def connect_to_airsim(self, airsim_client):
+        """Подключение к камере AirSim"""
+        self.camera_client = airsim_client
+        
+    def start_detection(self):
+        """Запуск детекции в отдельном потоке"""
+        if self.detection_active:
+            return
+            
+        self.detection_active = True
+        self.detection_thread = Thread(target=self._detection_loop, daemon=True)
+        self.detection_thread.start()
+        print("🚀 YOLOv8 детекция запущена")
+        
+    def stop_detection(self):
+        """Остановка детекции"""
+        self.detection_active = False
+        if self.detection_thread:
+            self.detection_thread.join(timeout=2)
+        print("🛑 YOLOv8 детекция остановлена")
+        
+    def _detection_loop(self):
+        """Основной цикл детекции"""
+        while self.detection_active:
+            try:
+                # Получение кадра из AirSim
+                if self.camera_client:
+                    responses = self.camera_client.simGetImages([
+                        airsim.ImageRequest("0", airsim.ImageType.Scene, False, False)
+                    ])
+                    
+                    if responses and responses[0]:
+                        # Конвертация изображения
+                        img1d = np.frombuffer(responses[0].image_data_uint8, dtype=np.uint8)
+                        img_rgb = img1d.reshape(responses[0].height, responses[0].width, 3)
+                        
+                        # Изменение размера для ускорения обработки
+                        frame_resized = cv2.resize(img_rgb, 
+                                                  (Config.YOLO_FRAME_WIDTH, 
+                                                   Config.YOLO_FRAME_HEIGHT))
+                        
+                        # Детекция
+                        results = self.model(frame_resized, 
+                                           conf=self.conf_threshold, 
+                                           device=self.device,
+                                           verbose=False)[0]
+                        
+                        with self.lock:
+                            self.current_frame = img_rgb  # Сохраняем оригинальный кадр
+                            self.detection_results = results
+                            
+                time.sleep(0.033)  # ~30 FPS
+                
+            except Exception as e:
+                print(f"❌ Ошибка детекции: {e}")
+                time.sleep(1)
+                
+    def get_detection_display(self):
+        """Получение кадра с bounding boxes"""
+        with self.lock:
+            if self.current_frame is None or self.detection_results is None:
+                return None
+                
+            # Создание копии кадра для отрисовки
+            display_frame = self.current_frame.copy()
+            
+            # Отрисовка bounding boxes
+            if hasattr(self.detection_results, 'boxes'):
+                boxes = self.detection_results.boxes
+                for box in boxes:
+                    # Координаты (масштабированные)
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    conf = box.conf[0].cpu().numpy()
+                    cls = int(box.cls[0].cpu().numpy())
+                    
+                    # Масштабирование координат до оригинального размера
+                    original_height, original_width = self.current_frame.shape[:2]
+                    x1 = int(x1 * original_width / Config.YOLO_FRAME_WIDTH)
+                    y1 = int(y1 * original_height / Config.YOLO_FRAME_HEIGHT)
+                    x2 = int(x2 * original_width / Config.YOLO_FRAME_WIDTH)
+                    y2 = int(y2 * original_height / Config.YOLO_FRAME_HEIGHT)
+                    
+                    # Отрисовка прямоугольника
+                    color = self.colors[cls % len(self.colors)]
+                    cv2.rectangle(display_frame, 
+                                (int(x1), int(y1)), 
+                                (int(x2), int(y2)), 
+                                color, 2)
+                    
+                    # Текст с классом и уверенностью
+                    class_name = self.detection_results.names[cls]
+                    label = f'{class_name} ({conf:.2%})'
+                    cv2.putText(display_frame, label,
+                              (int(x1), int(y1) - 10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            return display_frame
+            
+    def get_detected_objects_count(self):
+        """Получение количества обнаруженных объектов"""
+        with self.lock:
+            if self.detection_results and hasattr(self.detection_results, 'boxes'):
+                return len(self.detection_results.boxes)
+        return 0
 
 # ============================================================================
 # КЛАССЫ ДАННЫХ
@@ -88,17 +238,21 @@ class ControlData:
     control_roll: float
 
 # ============================================================================
-# КЛАСС ЛОГГЕРА
+# КЛАСС ЛОГГЕРА 
 # ============================================================================
 
 class Logger:
-    """Класс для логирования данных"""
+    """Класс для логирования данных с корректным временем"""
     
     def __init__(self, log_dir: str = Config.LOG_DIR):
         self.log_dir = log_dir
         os.makedirs(self.log_dir, exist_ok=True)
         
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Запоминаем время старта программы
+        self.program_start_time = time.time()
+        self.start_datetime = datetime.now()
+        
+        timestamp = self.start_datetime.strftime('%Y%m%d_%H%M%S')
         self.filename = f"angles_log_{timestamp}.txt"
         self.filepath = os.path.join(self.log_dir, self.filename)
         
@@ -106,15 +260,27 @@ class Logger:
     
     def _write_header(self):
         """Запись заголовка в лог-файл"""
-        header = "Time(s)\tRaw_Yaw\tRaw_Pitch\tRaw_Roll\tRel_Pitch\tRel_Roll\t" \
-                 "Control_Pitch\tControl_Roll\tVelocity_X\tVelocity_Y\n"
+        header = ("#" * 80 + "\n"
+                 f"# Flight Log Session Started: {self.start_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                 f"# Log File: {self.filename}\n"
+                 "#" * 80 + "\n\n"
+                 "Absolute_Time\tTime_From_Start(s)\tRaw_Yaw\tRaw_Pitch\tRaw_Roll\t"
+                 "Rel_Pitch\tRel_Roll\tControl_Pitch\tControl_Roll\tVelocity_X\tVelocity_Y\n")
+        
         with open(self.filepath, 'w', encoding='utf-8') as f:
             f.write(header)
     
     def log_angles(self, sensor_data: SensorData, control_data: ControlData,
                   rel_pitch: float, rel_roll: float):
-        """Логирование углов и контрольных данных"""
-        data_line = (f"{sensor_data.timestamp:.2f}\t"
+        """Логирование углов и контрольных данных с корректным временем"""
+        current_time = time.time()
+        elapsed_time = current_time - self.program_start_time
+        
+        # Форматируем абсолютное время
+        abs_time = datetime.fromtimestamp(current_time).strftime('%H:%M:%S.%f')[:-3]
+        
+        data_line = (f"{abs_time}\t"
+                    f"{elapsed_time:.3f}\t"
                     f"{sensor_data.yaw:.2f}\t"
                     f"{sensor_data.pitch:.2f}\t"
                     f"{sensor_data.roll:.2f}\t"
@@ -130,11 +296,14 @@ class Logger:
     
     def log_calibration(self, calibration: CalibrationData):
         """Логирование калибровочных данных"""
-        log_line = (f"# CALIBRATION_DATA: "
-                   f"zero_pitch={calibration.zero_pitch:.2f}, "
-                   f"zero_roll={calibration.zero_roll:.2f}, "
-                   f"sensitivity={calibration.sensitivity:.2f}, "
-                   f"dead_zone={calibration.dead_zone:.2f}\n")
+        current_time = datetime.now().strftime('%H:%M:%S')
+        elapsed_time = time.time() - self.program_start_time
+        
+        log_line = (f"# [{current_time}] [{elapsed_time:.2f}s] CALIBRATION_DATA:\n"
+                   f"#   zero_pitch={calibration.zero_pitch:.2f}\n"
+                   f"#   zero_roll={calibration.zero_roll:.2f}\n"
+                   f"#   sensitivity={calibration.sensitivity:.2f}\n"
+                   f"#   dead_zone={calibration.dead_zone:.2f}\n")
         
         with open(self.filepath, 'a', encoding='utf-8') as f:
             f.write(log_line)
@@ -567,6 +736,7 @@ class MenuManager:
         self.camera_menu_shown = False
         self.show_menu_after_command = False
         self.telemetry_line_shown = False
+        self.object_detection_flag = False
         
         if not WINDOWS:
             # Сохраняем настройки терминала для Linux
@@ -642,6 +812,11 @@ class DroneControlSystem:
         # Обработка данных
         self.sensor_processor = SensorProcessor(self.calibration)
         
+        # YOLOv8 детектор
+        self.yolo_detector = YOLOv8Detector()
+        self.object_detection_active = False
+        self.detection_display_thread = None
+        
         # Время
         self.start_time = time.time()
         self.last_command_time = time.time()
@@ -679,6 +854,14 @@ class DroneControlSystem:
             print(f"  Zero Pitch: {self.calibration.zero_pitch:.1f}°")
             print(f"  Zero Roll: {self.calibration.zero_roll:.1f}°")
         
+        print("-" * 60)
+        print(f"YOLOv8 Детекция:")
+        status = '✅ АКТИВНА' if self.object_detection_active else '❌ НЕАКТИВНА'
+        print(f"  Статус: {status}")
+        if self.object_detection_active:
+            objects_count = self.yolo_detector.get_detected_objects_count()
+            print(f"  Обнаружено объектов: {objects_count}")
+        
         print("="*60)
     
     def show_main_menu(self):
@@ -692,6 +875,7 @@ class DroneControlSystem:
             menu_items = [
                 "[1] Включить телеметрию",
                 "[2] Настройка камеры",
+                "[5] YOLOv8 Детекция объектов",  
                 "-" * 70,
                 "[3] Управление дроном (установка углов)",
                 "     Задает target angles на ESP32",
@@ -728,7 +912,6 @@ class DroneControlSystem:
             print("👉 Нажмите клавишу (цифра/буква)")
             
             self.menu.menu_shown = True
-            #self.menu.print_telemetry_flag = False
     
     def drone_control_menu(self):
         """Меню управления дроном"""
@@ -849,6 +1032,7 @@ class DroneControlSystem:
             '2': self._handle_camera_mode,
             '3': self._handle_drone_control,
             '4': self._handle_pid_info,
+            '5': self._handle_object_detection,  
             'a': self._handle_arm,
             'z': self._handle_disarm,
             's': self._handle_start_stream,
@@ -944,6 +1128,89 @@ class DroneControlSystem:
     def _handle_pid_info(self):
         self.show_pid_info()
         self.menu.show_menu_after_command = True
+    
+    def _handle_object_detection(self):
+        """Обработка запуска/остановки детекции объектов"""
+        if not self.airsim.connected:
+            print("\n❌ Сначала подключитесь к AirSim!")
+            self.menu.show_menu_after_command = True
+            return
+        
+        if not self.object_detection_active:
+            # ЗАПУСК ДЕТЕКЦИИ
+            print("\n🎯 ЗАПУСК YOLOv8 ДЕТЕКЦИИ")
+            print("-" * 40)
+            print("• Нажмите [5] повторно для остановки")
+            print("• Нажмите ESC в окне детекции для выхода")
+            print("• Обнаруженные объекты отображаются в bounding boxes")
+            print("-" * 40)
+            
+            # Подключаем детектор к AirSim
+            self.yolo_detector.connect_to_airsim(self.airsim.client)
+            self.object_detection_active = True
+            
+            # Запускаем детекцию
+            self.yolo_detector.start_detection()
+            
+            # Запускаем отображение в отдельном потоке
+            self.detection_display_thread = Thread(target=self._display_detection, 
+                                                  daemon=True)
+            self.detection_display_thread.start()
+            
+            print("✅ Детекция запущена. Окно OpenCV должно открыться.")
+            
+        else:
+            # ОСТАНОВКА ДЕТЕКЦИИ
+            print("\n🛑 Останавливаю детекцию...")
+            self.object_detection_active = False
+            self.yolo_detector.stop_detection()
+            cv2.destroyAllWindows()
+            print("✅ Детекция остановлена")
+        
+        self.menu.show_menu_after_command = True
+    
+    def _display_detection(self):
+        """Отображение детекции в отдельном окне"""
+        window_name = 'YOLOv8 Object Detection - AirSim'
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        
+        last_objects_count = 0
+        last_update_time = time.time()
+        
+        while self.object_detection_active and self.yolo_detector.detection_active:
+            try:
+                frame = self.yolo_detector.get_detection_display()
+                if frame is not None:
+                    # Добавляем информацию о количестве объектов
+                    objects_count = self.yolo_detector.get_detected_objects_count()
+                    
+                    # Обновляем счетчик в консоли каждые 2 секунды
+                    current_time = time.time()
+                    if objects_count != last_objects_count or current_time - last_update_time > 2:
+                        print(f"\r📦 Обнаружено объектов: {objects_count}", end='', flush=True)
+                        last_objects_count = objects_count
+                        last_update_time = current_time
+                    
+                    # Добавляем текст на кадр
+                    info_text = f"Objects: {objects_count}"
+                    cv2.putText(frame, info_text,
+                              (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                              1, (0, 255, 0), 2)
+                    
+                    # Показываем кадр
+                    cv2.imshow(window_name, frame)
+                
+                # Выход по ESC или кнопке 5
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:  # ESC
+                    self.object_detection_active = False
+                    break
+                    
+            except Exception as e:
+                print(f"❌ Ошибка отображения: {e}")
+                break
+        
+        cv2.destroyAllWindows()
     
     def _handle_arm(self):
         if not self.calibration_manager.calibration_done:
@@ -1053,9 +1320,10 @@ class DroneControlSystem:
     def run(self):
         """Запуск основной программы"""
         print("\n" + "="*60)
-        print("🚀 СИСТЕМА УПРАВЛЕНИЯ ДРОНОМ")
+        print("🚀 СИСТЕМА УПРАВЛЕНИЯ ДРОНОМ С YOLOv8")
         print("="*60)
         print(f"📝 Логирование начато: {os.path.basename(self.logger.get_log_path())}")
+        print(f"🤖 YOLOv8 модель: {Config.YOLO_MODEL_PATH}")
         
         # Запуск калибровки
         if not self._run_calibration():
@@ -1162,7 +1430,7 @@ class DroneControlSystem:
         self.last_rel_pitch = rel_pitch
         self.last_rel_roll = rel_roll
         
-        # Логирование
+        # Логирование с корректным временем
         self.logger.log_angles(sensor_data, control_data, rel_pitch, rel_roll)
         
         # Управление дроном в AirSim
@@ -1183,17 +1451,30 @@ class DroneControlSystem:
         if self.menu.telemetry_line_shown:
             print('\r' + ' ' * 120 + '\r', end='', flush=True)
         
+        # Получаем количество объектов, если детекция активна
+        objects_info = ""
+        if self.object_detection_active:
+            objects_count = self.yolo_detector.get_detected_objects_count()
+            objects_info = f" | Objects: {objects_count}"
+        
         # Выводим новую строку
         print(f"\r📊 Raw: P={self.last_sensor_data.pitch:6.1f}° R={self.last_sensor_data.roll:6.1f}° "
               f"Y={self.last_sensor_data.yaw:6.1f}° | Rel: P={self.last_rel_pitch:6.1f}° "
               f"R={self.last_rel_roll:6.1f}° | V: X={self.last_control_data.velocity_x:5.2f} "
-              f"Y={self.last_control_data.velocity_y:5.2f} m/s", end='', flush=True)
+              f"Y={self.last_control_data.velocity_y:5.2f} m/s{objects_info}", end='', flush=True)
         
         self.menu.telemetry_line_shown = True
     
     def shutdown(self):
         """Безопасное завершение работы"""
         print("\n🛬 Безопасное завершение...")
+        
+        # Остановка детекции, если активна
+        if self.object_detection_active:
+            print("🛑 Остановка YOLOv8 детекции...")
+            self.object_detection_active = False
+            self.yolo_detector.stop_detection()
+            cv2.destroyAllWindows()
         
         # Посадка дрона
         if self.airsim.connected and self.airsim.in_air:
