@@ -36,7 +36,7 @@ class Config:
     ESP32_IP = "172.20.10.3"
     PORT = 3333
     LOG_DIR = "logs"
-    TARGET_ALTITUDE = -5  # Высота в AirSim (отрицательная = вверх)
+    TARGET_ALTITUDE = -10  # Высота в AirSim (отрицательная = вверх)
     MIN_THROTTLE = 1000
     MAX_THROTTLE = 2000
     DEFAULT_THROTTLE = 1100
